@@ -386,8 +386,9 @@ class EDMDataset(Dataset):
         self.X = np.array(self.data[0])
         self.y = np.array(self.data[1])
         self.formula = np.array(self.data[2])
+        self.task_id = np.array(self.data[3])
 
-        self.shape = [(self.X.shape), (self.y.shape), (self.formula.shape)]
+        self.shape = [(self.X.shape), (self.y.shape), (self.formula.shape), (self.task_id.shape)]
 
     def __str__(self):
         string = f'EDMDataset with X.shape {self.X.shape}'
@@ -400,17 +401,20 @@ class EDMDataset(Dataset):
         X = self.X[idx, :, :]
         y = self.y[idx]
         formula = self.formula[idx]
+        task_id = self.task_id[idx]
 
         X = torch.as_tensor(X, dtype=data_type_torch)
         y = torch.as_tensor(y, dtype=data_type_torch)
 
-        return (X, y, formula)
+        return (X, y, formula, task_id)
 
 
 def get_edm(path, elem_prop='mat2vec', n_elements='infer', inference=False,
-            verbose=True):
+            verbose=True, load_type='EDM', robo_path = 'data/structure_properties/robocrys_features.csv'):
     """
-    Build a element descriptor matrix.
+    Build an element-derived matrix (EDM),
+    structure/element-derived matrix (SEDM),
+    or structure-derived matrix (SDM)
 
     Parameters
     ----------
@@ -418,6 +422,8 @@ def get_edm(path, elem_prop='mat2vec', n_elements='infer', inference=False,
         DESCRIPTION.
     elem_prop : str, optional
         DESCRIPTION. The default is 'oliynyk'.
+    load_type : str, optional
+        DESCRIPTION. which type of matrix to load ('EDM', 'SEDM', or 'SDM')
 
     Returns
     -------
@@ -452,7 +458,7 @@ def get_edm(path, elem_prop='mat2vec', n_elements='infer', inference=False,
     df['count'] = [len(_element_composition(form)) for form in df['formula']]
     df = df[df['count'] != 1]  # drop pure elements
     if not inference:
-        df = df.groupby(by='formula').mean().reset_index()  # mean of duplicates
+        df = df.groupby(by=['formula','task_id']).mean().reset_index()  # mean of duplicates
 
     list_ohm = [OrderedDict(_element_composition(form))
                 for form in df['formula']]
@@ -498,8 +504,40 @@ def get_edm(path, elem_prop='mat2vec', n_elements='infer', inference=False,
     elem_num = elem_num.reshape(elem_num.shape[0], elem_num.shape[1], 1)
     elem_frac = elem_frac.reshape(elem_frac.shape[0], elem_frac.shape[1], 1)
     out = np.concatenate((elem_num, elem_frac), axis=1)
-
-    return out, y, formula
+    
+    if load_type == ('SEDM' or 'SDM'):
+        if 'task_id' not in df.columns.values.tolist():
+            raise LookupError('task_id column should be present in CSV if load_type is SEDM or SDM')
+        task_id = list(df['task_id'])
+        robo_df = pd.read_csv(robo_path, keep_default_na=False, na_values=[''])
+        robo_cols = robo_df.columns.values.tolist()
+        robo_df = robo_df[robo_df['task_id'].isin(task_id)] #filter down to relevant task_ids
+        replace_keys = list(robo_df['task_id'])
+        replace_vals = list(robo_df.drop(columns='task_id').to_dict('index').values())
+        robo_sub_df = df['task_id'].replace(replace_keys, replace_vals) #apply replacement rules
+        robo_sub_df = pd.json_normalize(robo_sub_df) #split/expand replace_vals into multiple columns
+        robocrys_feat = robo_sub_df.drop(columns='pretty_formula')
+        
+        
+        #bool_feat = 
+        #float64_feat = 
+        #int64_feat = 
+        
+        robocrys_feat = robocrys_feat.to_numpy()
+        robocrys_feat = [list(row) for row in robocrys_feat]
+        #robo_sub_df = robo_df.merge(df['task_id'], how='left') #replacement rules
+        #[{a: b} for a in replace_keys for b in replace_vals]
+        #robo_sub_df = pd.DataFrame(index=range(0,len(task_id)),columns=robo_cols)
+        #robo_sub_df['task_id'] = task_id
+        #task_id.replace(task_id,)
+        
+        #feat_cols = [col for col in robo_cols if col != 'task_id'] #column names except 'task_id'
+        #robo_df
+        
+    elif load_type == 'EDM':
+        robocrys_feat = ['']*len(y)
+    
+    return out, y, formula, robocrys_feat
 
 
 # %%
@@ -525,12 +563,13 @@ class EDM_CsvLoader():
     def __init__(self, csv_data, batch_size=64,
                  num_workers=1, random_state=0, shuffle=True,
                  pin_memory=True, n_elements=6, inference=False,
-                 verbose=True):
+                 verbose=True, load_type='EDM'):
         self.csv_data = csv_data
         self.main_data = list(get_edm(self.csv_data, elem_prop='mat2vec',
                                       n_elements=n_elements,
                                       inference=inference,
-                                      verbose=verbose))
+                                      verbose=verbose,
+                                      load_type=load_type))
         self.n_train = len(self.main_data[0])
         self.n_elements = self.main_data[0].shape[1]//2
 
