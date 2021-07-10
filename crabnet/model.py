@@ -35,7 +35,7 @@ class Model():
         self.classification = False
         self.n_elements = n_elements
         self.compute_device = model.compute_device
-        self.fudge = 0.02  #  expected fractional tolerance (std. dev) ~= 2%
+        self.fudge = 0.02  # expected fractional tolerance (std. dev) ~= 2%
         self.verbose = verbose
         if self.verbose:
             print('\nModel architecture: out_dims, d_model, N, heads')
@@ -44,15 +44,16 @@ class Model():
             print(f'Running on compute device: {self.compute_device}')
             print(f'Model size: {count_parameters(self.model)} parameters\n')
 
-
-    def load_data(self, file_name, batch_size=2**9, train=False):
+    def load_data(self, file_name, batch_size=2**9, train=False, load_type='EDM'):
         self.batch_size = batch_size
         inference = not train
         data_loaders = EDM_CsvLoader(csv_data=file_name,
                                      batch_size=batch_size,
                                      n_elements=self.n_elements,
                                      inference=inference,
-                                     verbose=self.verbose)
+                                     verbose=self.verbose,
+                                     load_type=load_type)
+
         print(f'loading data with up to {data_loaders.n_elements:0.0f} '
               f'elements in the formula')
 
@@ -70,13 +71,12 @@ class Model():
             self.train_loader = data_loader
         self.data_loader = data_loader
 
-
     def train(self):
         self.model.train()
         ti = time()
         minima = []
         for i, data in enumerate(self.train_loader):
-            X, y, formula = data
+            X, y, formula, robocrys_feat = data
             y = self.scaler.scale(y)
             src, frac = X.squeeze(-1).chunk(2, dim=1)
             # add a small jitter to the input fractions to improve model
@@ -85,7 +85,8 @@ class Model():
             frac = frac * (1 + (torch.randn_like(frac))*self.fudge)  # normal
             frac = torch.clamp(frac, 0, 1)
             frac[src == 0] = 0
-            frac = frac / frac.sum(dim=1).unsqueeze(1).repeat(1, frac.shape[-1])
+            frac = frac / \
+                frac.sum(dim=1).unsqueeze(1).repeat(1, frac.shape[-1])
 
             src = src.to(self.compute_device,
                          dtype=torch.long,
@@ -97,7 +98,7 @@ class Model():
                      dtype=data_type_torch,
                      non_blocking=True)
 
-            output = self.model.forward(src, frac)
+            output = self.model.forward(src, frac, robocrys_feat)
             prediction, uncertainty = output.chunk(2, dim=-1)
             loss = self.criterion(prediction.view(-1),
                                   uncertainty.view(-1),
@@ -127,7 +128,6 @@ class Model():
         dt = time() - ti
         datalen = len(self.train_loader.dataset)
         # print(f'training speed: {datalen/dt:0.3f}')
-
 
     def fit(self, epochs=None, checkin=None, losscurve=False):
         assert_train_str = 'Please Load Training Data (self.train_loader)'
@@ -231,7 +231,7 @@ class Model():
                     plt.show()
 
             if (epoch == epochs-1 or
-                self.optimizer.discard_count >= self.discard_n):
+                    self.optimizer.discard_count >= self.discard_n):
                 # save output df for stats tracking
                 xval = np.arange(len(self.loss_curve['val'])) * checkin - 1
                 xval[0] = 0
@@ -271,7 +271,6 @@ class Model():
 
         if not (self.optimizer.discard_count >= self.discard_n):
             self.optimizer.swap_swa_sgd()
-
 
     def predict(self, loader):
         len_dataset = len(loader.dataset)
@@ -316,7 +315,6 @@ class Model():
 
         return (act, pred, formulae, uncert)
 
-
     def save_network(self, model_name=None):
         if model_name is None:
             model_name = self.model_name
@@ -331,7 +329,6 @@ class Model():
                      'scaler_state': self.scaler.state_dict(),
                      'model_name': model_name}
         torch.save(save_dict, path)
-
 
     def load_network(self, path):
         path = f'models/trained_models/{path}'

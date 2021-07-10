@@ -46,10 +46,11 @@ def get_model(data_dir, mat_prop, classification=False, batch_size=None,
         batch_size = 2**7
     if batch_size > 2**12:
         batch_size = 2**12
-    model.load_data(train_data, batch_size=batch_size, train=True)
+    load_type = 'SEDM' #'EDM', 'SEDM', or 'SDM'
+    model.load_data(train_data, batch_size=batch_size, train=True, load_type=load_type)
     print(f'training with batchsize {model.batch_size} '
           f'(2**{np.log2(model.batch_size):0.3f})')
-    model.load_data(val_data, batch_size=batch_size)
+    model.load_data(val_data, batch_size=batch_size, load_type=load_type)
 
     # Set the number of epochs, decide if you want a loss curve to be plotted
     model.fit(epochs=40, losscurve=False)

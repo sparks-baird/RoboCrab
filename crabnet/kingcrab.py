@@ -65,12 +65,13 @@ class Embedder(nn.Module):
         feat_size = cbfv.shape[-1]
         self.fc_mat2vec = nn.Linear(feat_size, d_model).to(self.compute_device)
         zeros = np.zeros((1, feat_size))
-        cat_array = np.concatenate([zeros, cbfv])
+        
+        cat_array = np.concatenate([zeros, cbfv]) #e.g. size: (118 elements + 1, 200 features)
         cat_array = torch.as_tensor(cat_array, dtype=data_type_torch)
         self.cbfv = nn.Embedding.from_pretrained(cat_array) \
             .to(self.compute_device, dtype=data_type_torch)
 
-    def forward(self, src):
+    def forward(self, src, robocrys_feat):
         mat2vec_emb = self.cbfv(src)
         x_emb = self.fc_mat2vec(mat2vec_emb)
         return x_emb
@@ -156,23 +157,40 @@ class Encoder(nn.Module):
             self.transformer_encoder = nn.TransformerEncoder(encoder_layer,
                                                              num_layers=self.N)
 
-    def forward(self, src, frac):
-        x = self.embed(src) * 2**self.emb_scaler
+    def forward(self, src, frac, robocrys_feat):
+        #scaled, fully-connected mat2vec (fc_mat2vec) embedding, see Fig 6 of 10.1038/s41524-021-00545-1
+        x = self.embed(src, robocrys_feat) * 2**self.emb_scaler
+        
+        # mask has 1 if n-th element is present, 0 if not. E.g. single element compound has mostly mask of 0's
         mask = frac.unsqueeze(dim=-1)
         mask = torch.matmul(mask, mask.transpose(-2, -1))
         mask[mask != 0] = 1
         src_mask = mask[:, 0] != 1
 
-        pe = torch.zeros_like(x)
-        ple = torch.zeros_like(x)
+        #fractional encoding, see Fig 6 of 10.1038/s41524-021-00545-1
+        pe = torch.zeros_like(x) #prevalence encoding
+        ple = torch.zeros_like(x) #prevalence log encoding
         pe_scaler = 2**(1-self.pos_scaler)**2
         ple_scaler = 2**(1-self.pos_scaler_log)**2
+        # first half of features are prevalence encoded (i.e. 512//2==256)
         pe[:, :, :self.d_model//2] = self.pe(frac) * pe_scaler
+        # second half of features are prevalence log encoded
         ple[:, :, self.d_model//2:] = self.ple(frac) * ple_scaler
 
         if self.attention:
+            #sum of fc_mat2vec embedding (x), prevalence encoding (pe), and prevalence log encoding (ple)
+            #see Fig 6 of 10.1038/s41524-021-00545-1
             x_src = x + pe + ple
             x_src = x_src.transpose(0, 1)
+            
+            #transformer encoding
+            """note on src_key_padding_mask: if provided, specified padding elements
+            in the key will be ignored by the attention. When given a binary mask
+            and a value is True, the corresponding value on the attention layer
+            will be ignored. When given a byte mask and a value is non-zero, the
+            corresponding value on the attention layer will be ignored.
+            Source: https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html
+            https://pytorch.org/docs/stable/generated/torch.nn.TransformerEncoder.html"""
             x = self.transformer_encoder(x_src,
                                          src_key_padding_mask=src_mask)
             x = x.transpose(0, 1)
@@ -180,8 +198,11 @@ class Encoder(nn.Module):
         if self.fractional:
             x = x * frac.unsqueeze(2).repeat(1, 1, self.d_model)
 
+        """0:1 index eliminates the repeated values (down to 1 colummn)
+        repeat() fills it back up (to e.g. d_model == 512 values)"""
         hmask = mask[:, :, 0:1].repeat(1, 1, self.d_model)
         if mask is not None:
+            #set values of x which correspond to an element not being present to 0
             x = x.masked_fill(hmask == 0, 0)
 
         return x
@@ -211,16 +232,16 @@ class CrabNet(nn.Module):
                                          self.out_dims,
                                          self.out_hidden)
 
-    def forward(self, src, frac):
-        output = self.encoder(src, frac)
+    def forward(self, src, frac, robocrys_feat):
+        output = self.encoder(src, frac, robocrys_feat) # e.g. size: (256 batch size, 3 elements, 512 features)
 
         # average the "element contribution" at the end
         # mask so you only average "elements"
         mask = (src == 0).unsqueeze(-1).repeat(1, 1, self.out_dims)
-        output = self.output_nn(output)  # simple linear
+        output = self.output_nn(output)  # simple linear, e.g. size (256 batch size, 3 elements, 3 elements)
         if self.avg:
             output = output.masked_fill(mask, 0)
-            output = output.sum(dim=1)/(~mask).sum(dim=1)
+            output = output.sum(dim=1)/(~mask).sum(dim=1) # e.g. size (256 batch size, 3 elements)
             output, logits = output.chunk(2, dim=-1)
             probability = torch.ones_like(output)
             probability[:, :logits.shape[-1]] = torch.sigmoid(logits)
