@@ -1,4 +1,4 @@
-name: crabnet
+name: scabnet
 channels:
   - pytorch
   - conda-forge
