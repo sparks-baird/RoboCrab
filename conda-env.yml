@@ -12,3 +12,4 @@ dependencies:
   - pytorch=1.7.*
   - cudatoolkit=11.*
   - tqdm
+  - pymatgen
