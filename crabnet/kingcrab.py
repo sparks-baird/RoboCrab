@@ -76,18 +76,28 @@ class Embedder(nn.Module):
             self.compute_device, dtype=data_type_torch
         )
 
-    def forward(self, src, cat_feat, bool_feat, float_feat):
+        # e.g. size: ()
+        sbfv = np.ones_like(cbfv)
+        feat_size = sbfv.shape[-1]
+        zeros = np.zeros((1, feat_size))
+        cat_array = np.concatenate([zeros, sbfv])
+        cat_array = torch.as_tensor(cat_array, dtype=data_type_torch)
+        self.sbfv = nn.Embedding.from_pretrained(cat_array).to(
+            self.compute_device, dtype=data_type_torch
+        )
+
+    def forward(self, src, cat_feat, bool_src, float_feat):
         """
-        compute elemental and structural embedding using elemental indices and robocrystallographer features
+        Compute elemental and structural embedding using elemental indices and robocrystallographer features.
 
         Parameters
         ----------
         src : torch.Tensor (Batch Size, # elements)
-            Elemental indices (remainder filled with zeros). E.g. hydrogen encoded as 1.
+            Elemental indices (padded). E.g. hydrogen encoded as 1.
         cat_feat : torch.Tensor (Batch Size, # features = 3)
             Categorical robocrystallographer features. E.g. 'dimensionality'.
-        bool_feat : torch.Tensor (Batch Size, # features = 109)
-            Boolean robocrystallographer features. E.g. 'contains_tetrahedral'.
+        bool_src : torch.Tensor (Batch Size, # features = 15)
+            Boolean robocrystallographer feature indices (padded). E.g. 'contains_tetrahedral'.
         float_feat : torch.Tensor (Batch Size, # features = 44)
             Numerical robocrystallographer features. E.g. 'average_bond_length'.
 
@@ -99,29 +109,53 @@ class Embedder(nn.Module):
         """
         mat2vec_emb = self.cbfv(src)
 
+        bool_emb = self.sbfv(bool_src)
+
         # stack mat2vec_emb and (expanded/repeated) structural features
-        feats = [cat_feat, bool_feat, float_feat]
-        feats = [
-            feat.unsqueeze(2).repeat([1, 1, mat2vec_emb.shape[2]]) for feat in feats
-        ]
-        feats = torch.cat(feats, dim=1)
+        feats = [cat_feat, float_feat]
+        d = [1, 1, mat2vec_emb.shape[2]]
+        cat_feat, float_feat = [feat.unsqueeze(2).repeat(d) for feat in feats]
 
         # size e.g. (256, # Elements + # Structural features = 159, 200)
-        feats = torch.cat([mat2vec_emb, feats], dim=1)
+        feats = torch.cat([mat2vec_emb, cat_feat, bool_emb, float_feat], dim=1)
 
         # size e.g. (256, 159, 512)
         x_emb = self.fc_mat2vec(feats)
         return x_emb
 
+        """mini code graveyard"""
+        """
+                # to determine filler dimension
+        # bool_len = list(map(len, bool_src))
+        # mx = max(bool_len)  # this might need to be defined earlier for the full dataset
+
+        # add filler zeros
+        # bool_src = [
+        #     torch.cat(
+        #         [
+        #             bools,
+        #             torch.zeros(
+        #                 mx - len(bools), dtype=bool, device=self.compute_device
+        #             ),
+        #         ]
+        #     )
+        #     for bools in bool_src
+        # ]
+        # bool_src = pad(bools[[0, 0], [0, mx - len(bools)]])
+        # bool_src = torch.stack(bool_src)
+        
+        # feats = torch.cat(feats, dim=1)
+        
         # cat_feat.repeat([1, len(mat2vec_emb)], 1)
+        """
 
 
 # %%
 class FractionalEncoder(nn.Module):
     """
-    Encoding element fractional amount using a "fractional encoding" inspired
-    by the positional encoder discussed by Vaswani.
-    https://arxiv.org/abs/1706.03762
+    Encoding element fractional amount using a "fractional encoding" inspired by the positional encoder discussed by Vaswani.
+    
+    See https://arxiv.org/abs/1706.03762
     """
 
     def __init__(self, d_model, resolution=100, log10=False, compute_device=None):
@@ -184,14 +218,15 @@ class Encoder(nn.Module):
                 encoder_layer, num_layers=self.N
             )
 
-    def forward(self, src, frac, cat_feat, bool_feat, float_feat):
+    def forward(self, src, frac, cat_feat, bool_src, float_feat):
         # scaled, fully-connected mat2vec (fc_mat2vec) embedding, see Fig 6 of 10.1038/s41524-021-00545-1
-        x = self.embed(src, cat_feat, bool_feat, float_feat) * 2 ** self.emb_scaler
+        x = self.embed(src, cat_feat, bool_src, float_feat) * 2 ** self.emb_scaler
 
-        nrobo_feat = sum([feat.shape[1] for feat in [cat_feat, bool_feat, float_feat]])
+        nrobo_feat = x.shape[1] - src.shape[1]
 
-        # "fractional coordinates" for structural features are constant (ones)
+        # "fractional coordinates" for structural features are constant (ones or scaled constant)
         # should I divide by the number of structural features? Probably best to have some type of normalization to avoid nans
+        # normalization possibly should be the # of True's in each compound?
         d = [frac.shape[0], nrobo_feat]
         ones = torch.ones(d, device=self.compute_device, dtype=src.dtype)
         frac = torch.cat([frac, ones / nrobo_feat], dim=1)
@@ -242,10 +277,21 @@ class Encoder(nn.Module):
 
         return x
 
+        """mini code graveyard"""
+        """
+        #nrobo_feat = sum([feat.shape[1] for feat in [cat_feat, bool_feat, float_feat]])
+        """
+
 
 # %%
 class CrabNet(nn.Module):
-    def __init__(self, out_dims=5, d_model=512, N=3, heads=4, compute_device=None):
+    """
+    Compositionally restricted attention based network for predicting material properties.
+    
+    keep out_dims set to 3 (important for having correct shape for prediction/uncertainty)
+    """
+
+    def __init__(self, out_dims=3, d_model=512, N=3, heads=4, compute_device=None):
         super().__init__()
         self.avg = True
         self.out_dims = out_dims
@@ -262,7 +308,7 @@ class CrabNet(nn.Module):
         self.out_hidden = [1024, 512, 256, 128]
         self.output_nn = ResidualNetwork(self.d_model, self.out_dims, self.out_hidden)
 
-    def forward(self, src, frac, cat_feat, bool_feat, float_feat):
+    def forward(self, src, frac, cat_feat, bool_src, float_feat):
         """
         
 
@@ -274,7 +320,7 @@ class CrabNet(nn.Module):
             DESCRIPTION.
         cat_feat : TYPE
             DESCRIPTION.
-        bool_feat : TYPE
+        bool_src : TYPE
             DESCRIPTION.
         float_feat : TYPE
             DESCRIPTION.
@@ -286,21 +332,21 @@ class CrabNet(nn.Module):
 
         """
         # e.g. size: (256 batch size, 3 elements, 512 features)
-        output = self.encoder(src, frac, cat_feat, bool_feat, float_feat)
+        output = self.encoder(src, frac, cat_feat, bool_src, float_feat)
         batch_size = output.shape[0]
 
         # elemental mask (so you only average "elements", not the filler dimensions)
         emask = src == 0
 
         # structural masks setup
-        nrobo_feats = [feat.shape[1] for feat in [cat_feat, bool_feat, float_feat]]
+        nrobo_feats = [feat.shape[1] for feat in [cat_feat, bool_src, float_feat]]
         d1, d2, d3 = [[batch_size, n] for n in nrobo_feats]  # d2 unused
 
         # categorical mask
         cmask = torch.zeros(d1, device=self.compute_device, dtype=bool)
 
-        # boolean mask (nice that we can simply invert the original boolean feature matrix)
-        bmask = ~bool_feat
+        # boolean mask
+        bmask = bool_src == 0
 
         # float mask
         fmask = torch.zeros(d3, device=self.compute_device, dtype=bool)
@@ -308,13 +354,13 @@ class CrabNet(nn.Module):
         # concatenate the various masks
         mask = torch.cat([emask, cmask, bmask, fmask], dim=1)
 
-        # massage/duplicate into correct size, e.g. size (32 batch_size, 159 elemental+structural features, 5 out_dims)
+        # massage/duplicate into correct size, e.g. size (32 batch_size, 159 elemental+structural features, 3 out_dims)
         mask = mask.unsqueeze(-1).repeat(1, 1, self.out_dims)
 
-        # simple linear, e.g. size (32 batch_size, 159 elemental+structural features, 5 out_dims)
+        # simple linear, e.g. size (32 batch_size, 159 elemental+structural features, 3 out_dims)
         output = self.output_nn(output)
 
-        # average the "element contribution" at the end e.g. size (256 batch size, 3 elements)
+        # average the "element contribution" at the end e.g. size (32 batch size, 3 elements)
         if self.avg:
             # fill True locations of mask with 0
             output = output.masked_fill(mask, 0)
@@ -329,6 +375,12 @@ class CrabNet(nn.Module):
             output = output * probability
 
         return output
+
+    """mini code graveyard"""
+    """
+    # boolean mask (nice that we can simply invert the original boolean feature matrix)
+    # bmask = ~bool_feat
+    """
 
 
 # %%

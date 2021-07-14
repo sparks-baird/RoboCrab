@@ -89,7 +89,7 @@ class Model:
         ti = time()
         minima = []
         for i, data in enumerate(self.train_loader):
-            X, y, formula, cat_feat, bool_feat, float_feat = data
+            X, y, formula, cat_feat, bool_src, float_feat = data
             y = self.scaler.scale(y)
             src, frac = X.squeeze(-1).chunk(2, dim=1)
             # add a small jitter to the input fractions to improve model
@@ -107,17 +107,15 @@ class Model:
 
             y = y.to(compute_device, dtype=data_type_torch, non_blocking=True)
 
-            cat_feat = cat_feat.to(compute_device, dtype=torch.int8, non_blocking=True)
+            cat_feat = cat_feat.to(compute_device, dtype=torch.long, non_blocking=True)
 
-            bool_feat = bool_feat.to(
-                compute_device, dtype=torch.bool, non_blocking=True
-            )
+            bool_src = bool_src.to(compute_device, dtype=torch.long, non_blocking=True)
 
             float_feat = float_feat.to(
                 compute_device, dtype=data_type_torch, non_blocking=True
             )
 
-            output = self.model.forward(src, frac, cat_feat, bool_feat, float_feat)
+            output = self.model.forward(src, frac, cat_feat, bool_src, float_feat)
             prediction, uncertainty = output.chunk(2, dim=-1)
             loss = self.criterion(prediction.view(-1), uncertainty.view(-1), y.view(-1))
 
@@ -304,17 +302,35 @@ class Model:
         formulae = np.empty(len_dataset, dtype=list)
         atoms = np.empty((len_dataset, n_atoms))
         fractions = np.empty((len_dataset, n_atoms))
+        compute_device = self.compute_device
         self.model.eval()
         with torch.no_grad():
             for i, data in enumerate(loader):
-                X, y, formula = data
+                # unpack
+                X, y, formula, cat_feat, bool_src, float_feat = data
+                y = self.scaler.scale(y)
                 src, frac = X.squeeze(-1).chunk(2, dim=1)
-                src = src.to(self.compute_device, dtype=torch.long, non_blocking=True)
-                frac = frac.to(
-                    self.compute_device, dtype=data_type_torch, non_blocking=True
+
+                # move values to compute device
+                src = src.to(compute_device, dtype=torch.long, non_blocking=True)
+
+                frac = frac.to(compute_device, dtype=data_type_torch, non_blocking=True)
+
+                y = y.to(compute_device, dtype=data_type_torch, non_blocking=True)
+
+                cat_feat = cat_feat.to(
+                    compute_device, dtype=torch.long, non_blocking=True
                 )
-                y = y.to(self.compute_device, dtype=data_type_torch, non_blocking=True)
-                output = self.model.forward(src, frac)
+
+                bool_src = bool_src.to(
+                    compute_device, dtype=torch.long, non_blocking=True
+                )
+
+                float_feat = float_feat.to(
+                    compute_device, dtype=data_type_torch, non_blocking=True
+                )
+
+                output = self.model.forward(src, frac, cat_feat, bool_src, float_feat)
                 prediction, uncertainty = output.chunk(2, dim=-1)
                 uncertainty = torch.exp(uncertainty) * self.scaler.std
                 prediction = self.scaler.unscale(prediction)

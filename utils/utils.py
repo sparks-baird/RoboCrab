@@ -1,4 +1,6 @@
 import os
+from os.path import join
+from warnings import warn
 
 import pandas as pd
 import numpy as np
@@ -10,6 +12,7 @@ from collections import OrderedDict, defaultdict
 import torch
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_sequence
 from torch import nn
 
 from utils.composition import generate_features, _element_composition
@@ -508,7 +511,7 @@ class EDMDataset(Dataset):
         self.y = np.array(self.data[1])
         self.formula = np.array(self.data[2])
         self.cat_feat = np.array(self.data[3])
-        self.bool_feat = np.array(self.data[4])
+        self.bool_src = np.array(self.data[4])
         self.float_feat = np.array(self.data[5])
 
         self.shape = [
@@ -516,7 +519,7 @@ class EDMDataset(Dataset):
             (self.y.shape),
             (self.formula.shape),
             (self.cat_feat.shape),
-            (self.bool_feat.shape),
+            (self.bool_src.shape),
             (self.float_feat.shape),
         ]
 
@@ -532,13 +535,13 @@ class EDMDataset(Dataset):
         y = self.y[idx]
         formula = self.formula[idx]
         cat_feat = self.cat_feat[idx]
-        bool_feat = self.bool_feat[idx]
+        bool_src = self.bool_src[idx]
         float_feat = self.float_feat[idx]
 
         X = torch.as_tensor(X, dtype=data_type_torch)
         y = torch.as_tensor(y, dtype=data_type_torch)
 
-        return (X, y, formula, cat_feat, bool_feat, float_feat)
+        return (X, y, formula, cat_feat, bool_src, float_feat)
 
 
 def get_edm(
@@ -548,7 +551,7 @@ def get_edm(
     inference=False,
     verbose=True,
     load_type="EDM",
-    robo_path="data/structure_properties/robocrys_features.csv",
+    robo_dir="data/structure_properties/",
 ):
     """
     Build an element-derived matrix (EDM), structure/element-derived matrix (SEDM), or structure-derived matrix (SDM).
@@ -754,6 +757,7 @@ def get_edm(
                 "task_id column should be present in CSV if load_type is SEDM or SDM"
             )
         task_id = list(df["task_id"])
+        robo_path = join(robo_dir, "robocrys_features.csv")
         robo_df = pd.read_csv(robo_path, keep_default_na=False, na_values=[""])
 
         # filter down to relevant task_ids
@@ -764,42 +768,78 @@ def get_edm(
         # apply replacement rules (e.g. 'mp-134' -> data)
         robo_sub_df = df["task_id"].replace(replace_keys, replace_vals)
 
+        # find where robo_df is lacking in replace_keys if any
+        types = list(map(type, robo_sub_df))
+        TF = [t == str for t in types]
+        idx = np.where(np.array(TF))[0].tolist()
+
+        if len(idx) > 0:
+            warn(
+                f"Number of replace_keys missing in robo file: {len(idx)} ... filling with zeros. Printing indices if less than 20 total."
+            )
+            if len(idx) < 20:
+                print(idx)
+
+            # replace with empty dict
+            robo_sub_df[idx] = [{}] * len(idx)
+
         # split/expand replace_vals into multiple columns
-        robo_sub_df = pd.json_normalize(robo_sub_df)
+        # robo_sub_df = pd.json_normalize(robo_sub_df)  # dtypes not parsed correctly.., other errors
+        # robo_sub_df = robo_sub_df.explode(ignore_index=True)
+        # robo_sub_df = pd.DataFrame(robo_sub_df)
+
+        # slow, but seems more reliable than pd.json_normalize
+        robo_sub_df = robo_sub_df.apply(pd.Series)
+        robo_sub_df.fillna(False, inplace=True)
+        # pd.DataFrame(robo_sub_df.values.tolist())
+
         robocrys_feat = robo_sub_df.drop(columns="pretty_formula")
 
-        robo_cols = robocrys_feat.columns.values.tolist()
+        # robo_cols = robocrys_feat.columns.values.tolist()
 
         # Initialize
         cat_feat = pd.DataFrame()
         bool_feat = pd.DataFrame()
         float_feat = pd.DataFrame()
-        cat_cols = []
+        # cat_cols = []
 
-        # split into categorical, boolean, and numerical data for PyTorch Tensor compatiblity
-        col_types = robocrys_feat.dtypes
-        for i, col in enumerate(robo_cols):
-            col_type = col_types[i]
-            if col_type in [np.object, np.int64]:
-                cat_cols.append(col)
-                cat_feat[col] = robocrys_feat[col].astype(dtype="category")
-            elif col_type == np.bool:
-                bool_feat[col] = robocrys_feat[col]
-            elif col_type == np.float64:
-                float_feat[col] = robocrys_feat[col]
+        # read categorical, boolean, and float variable names
+        names = ["cat_names.csv", "bool_names.csv", "float_names.csv"]
+        cat_cols, bool_cols, float_cols = [
+            list(pd.read_csv(join(robo_dir, name))) for name in names
+        ]
 
+        # categorical dataframe
+        for col in cat_cols:
+            cat_feat[col] = robocrys_feat[col].astype(dtype="category")
         cat_feat = [cat_feat[col].cat.codes.to_numpy() for col in cat_cols]
         cat_feat = np.stack(cat_feat, 1)
 
+        # boolean and float dataframes
+        bool_feat = robocrys_feat[bool_cols].astype("bool")
+        float_feat = robocrys_feat[float_cols].astype("float")
+        # bool_feat, float_feat = [
+        #     robocrys_feat[cols] for cols in [bool_cols, float_cols]
+        # ]
         bool_feat = bool_feat.to_numpy().tolist()
         float_feat = float_feat.to_numpy().tolist()
 
-    elif load_type == "EDM":
-        cat_feat = [0] * len(y)
-        bool_feat = [0] * len(y)
-        float_feat = [0] * len(y)
+        # some variant of torch.nonzero(bool_feat) might also work
+        bool_src = [torch.tensor(np.flatnonzero(bools)) for bools in bool_feat]
+        # pad with zeros
+        # mx = max(list(map(len, bool_src)))
+        bool_src = pad_sequence(bool_src, batch_first=True).numpy().tolist()
+        # del bool_src[:, 15 + 1 :]
 
-    return out, y, formula, cat_feat, bool_feat, float_feat
+    elif load_type == "EDM":
+        # cat_feat = [0] * len(y)
+        # bool_feat = [0] * len(y)
+        # float_feat = [0] * len(y)
+        cat_feat = None
+        bool_src = None
+        float_feat = None
+
+    return out, y, formula, cat_feat, bool_src, float_feat
 
 
 """mini code graveyard
@@ -825,6 +865,18 @@ def get_edm(
 
         # feat_cols = [col for col in robo_cols if col != 'task_id'] #column names except 'task_id'
         # robo_df
+        
+                # split into categorical, boolean, and numerical data for PyTorch Tensor compatiblity
+        # col_types = robocrys_feat.dtypes
+        # for i, col in enumerate(robo_cols):
+        #     col_type = col_types[i]
+        #     if col_type in [np.object, np.int64] or col == "dimensionality":
+        #         cat_cols.append(col)
+        #         cat_feat[col] = robocrys_feat[col].astype(dtype="category")
+        #     elif col_type == np.bool:
+        #         bool_feat[col] = robocrys_feat[col]
+        #     elif col_type == np.float64:
+        #         float_feat[col] = robocrys_feat[col]
 
 """
 
