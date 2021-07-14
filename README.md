@@ -1,8 +1,8 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-# Compositionally-Restricted Attention-Based Network (CrabNet)
+# Structural compositional attention-based Network (ScabNet)
 
-This software package implements the Compositionally-Restricted Attention-Based Network (`CrabNet`) that takes only composition information to predict material properties.
+This software package builds on the Compositionally-Restricted Attention-Based Network (`CrabNet`) that takes only composition information to predict material properties by adding structural features from [robocrystallographer](https://github.com/hackingmaterials/robocrystallographer).
 
 
 
@@ -148,3 +148,6 @@ For more information see:
 - https://github.com/pytorch/pytorch/issues/34537
 - https://github.com/pytorch/pytorch/issues/32590
 - https://discuss.pytorch.org/t/getting-nn-multiheadattention-attention-weights-for-each-head/72195/
+
+# Credit
+This repo was mirrored from https://github.com/anthony-wang/CrabNet
