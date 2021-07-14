@@ -543,6 +543,22 @@ class EDMDataset(Dataset):
 
         return (X, y, formula, cat_feat, bool_src, float_feat)
 
+        """mini code graveyard"""
+        """
+                if self.cat_feat.size != 0:
+            cat_feat = self.cat_feat[idx]
+        else:
+            cat_feat = np.empty(0,1)
+        if self.bool_src.size != 0:
+            bool_src = self.bool_src[idx]
+        else:
+            bool_src = np.empty(0,1)
+        if self.float_feat.size != 0:
+            float_feat = self.float_feat[idx]
+        else:
+            float_feat = np.empty(0,1)
+        """
+
 
 def get_edm(
     path,
@@ -832,12 +848,12 @@ def get_edm(
         # del bool_src[:, 15 + 1 :]
 
     elif load_type == "EDM":
-        # cat_feat = [0] * len(y)
-        # bool_feat = [0] * len(y)
-        # float_feat = [0] * len(y)
-        cat_feat = None
-        bool_src = None
-        float_feat = None
+        cat_feat = np.zeros([len(y), 3])
+        bool_src = np.zeros([len(y), 28])
+        float_feat = np.zeros([len(y), 44])
+        # cat_feat = torch.empty(0, len(y))
+        # bool_src = torch.empty(0, len(y))
+        # float_feat = torch.empty(0, len(y))
 
     return out, y, formula, cat_feat, bool_src, float_feat
 
