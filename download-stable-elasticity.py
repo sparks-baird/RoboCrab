@@ -9,7 +9,7 @@ Created on Mon Jul 12 21:22:35 2021
 from pymatgen.ext.matproj import MPRester
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from os import join
+from os.path import join
 from pathlib import Path
 
 # data directory
