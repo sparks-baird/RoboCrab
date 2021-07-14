@@ -51,12 +51,15 @@ def get_model(
 
     # Load the train and validation data before fitting the network
     data_size = pd.read_csv(train_data).shape[0]
-    batch_size = 2 ** round(np.log2(data_size) - 7)  # originally -4
-    if batch_size < 2 ** 4:
-        batch_size = 2 ** 4
+    batch_size = 2 ** round(np.log2(data_size) - 5)  # originally -4
+    if batch_size < 2 ** 6:
+        batch_size = 2 ** 6
     if batch_size > 2 ** 12:
         batch_size = 2 ** 12
+
+    # PARAMETER
     load_type = "SEDM"  #'EDM', 'SEDM', or 'SDM'
+
     model.load_data(train_data, batch_size=batch_size, train=True, load_type=load_type)
     print(
         f"training with batchsize {model.batch_size} "
@@ -65,7 +68,7 @@ def get_model(
     model.load_data(val_data, batch_size=batch_size, load_type=load_type)
 
     # Set the number of epochs, decide if you want a loss curve to be plotted
-    model.fit(epochs=40, losscurve=False)
+    model.fit(epochs=40, losscurve=True)
 
     # Save the network (saved as f"{model_name}.pth")
     model.save_network()
