@@ -308,7 +308,6 @@ class Model:
             for i, data in enumerate(loader):
                 # unpack
                 X, y, formula, cat_feat, bool_src, float_feat = data
-                y = self.scaler.scale(y)
                 src, frac = X.squeeze(-1).chunk(2, dim=1)
 
                 # move values to compute device
