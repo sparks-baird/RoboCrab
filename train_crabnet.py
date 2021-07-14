@@ -130,7 +130,7 @@ if __name__ == "__main__":
     # Choose the directory where your data is stored
     data_dir = "data/materials_data"
     # Choose the folder with your materials properties
-    mat_prop = "example_materials_property"
+    mat_prop = "stable_elasticity"
     # Choose if you data is a regression or binary classification
     classification = False
     # train = False
