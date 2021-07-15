@@ -203,6 +203,7 @@ class Encoder(nn.Module):
         self.attention = attn
         self.compute_device = compute_device
         self.embed = Embedder(d_model=self.d_model, compute_device=self.compute_device)
+        # what is resolution?
         self.pe = FractionalEncoder(self.d_model, resolution=5000, log10=False)
         self.ple = FractionalEncoder(self.d_model, resolution=5000, log10=True)
 
@@ -222,17 +223,28 @@ class Encoder(nn.Module):
         # scaled, fully-connected mat2vec (fc_mat2vec) embedding, see Fig 6 of 10.1038/s41524-021-00545-1
         x = self.embed(src, cat_feat, bool_src, float_feat) * 2 ** self.emb_scaler
 
-        nrobo_feat = x.shape[1] - src.shape[1]
-
-        # "fractional coordinates" for structural features are constant (ones or scaled constant)
-        # should I divide by the number of structural features? Probably best to have some type of normalization to avoid nans
-        # normalization possibly should be the # of True's in each compound?
-        d = [frac.shape[0], nrobo_feat]
-        ones = torch.ones(d, device=self.compute_device, dtype=src.dtype)
-        frac = torch.cat([frac, ones / nrobo_feat], dim=1)
+        nrobo_feats = [feat.shape[1] for feat in [cat_feat, bool_src, float_feat]]
+        d1, d2, d3 = [[frac.shape[0], n] for n in nrobo_feats]  # d2 unused
 
         # mask has 1 if n-th element is present, 0 if not. E.g. single element compound has mostly mask of 0's
-        mask = frac.unsqueeze(dim=-1)
+        # element
+        emask = frac
+        # category
+        cmask = torch.ones(d1, device=self.compute_device, dtype=src.dtype)
+        # boolean
+        bmask = bool_src
+        bmask[bmask != 0] = 1
+        # bmask = torch.ones(d2, device=self.compute_device, dtype=src.dtype)
+        # float
+        fmask = torch.ones(d3, device=self.compute_device, dtype=src.dtype)
+
+        # concatenate masks
+        mask_2d = torch.cat([emask, bmask, cmask, fmask], dim=1)
+
+        # unsqueeze
+        mask = mask_2d.unsqueeze(dim=-1)
+
+        # create src_mask
         mask = torch.matmul(mask, mask.transpose(-2, -1))
         mask[mask != 0] = 1
         src_mask = mask[:, 0] != 1
@@ -244,9 +256,9 @@ class Encoder(nn.Module):
         ple_scaler = 2 ** (1 - self.pos_scaler_log) ** 2
 
         # first half of features are prevalence encoded (i.e. 512//2==256)
-        pe[:, :, : self.d_model // 2] = self.pe(frac) * pe_scaler
+        pe[:, :, : self.d_model // 2] = self.pe(mask_2d) * pe_scaler
         # second half of features are prevalence log encoded
-        ple[:, :, self.d_model // 2 :] = self.ple(frac) * ple_scaler
+        ple[:, :, self.d_model // 2 :] = self.ple(mask_2d) * ple_scaler
 
         if self.attention:
             # sum of fc_mat2vec embedding (x), prevalence encoding (pe), and prevalence log encoding (ple)
@@ -280,6 +292,24 @@ class Encoder(nn.Module):
         """mini code graveyard"""
         """
         #nrobo_feat = sum([feat.shape[1] for feat in [cat_feat, bool_feat, float_feat]])
+        
+        # ones = torch.ones(d, device=self.compute_device, dtype=src.dtype)
+        # frac = torch.cat([frac, ones / nrobo_feat], dim=1)
+        # d = [frac.shape[0], nrobo_feat]
+        # nrobo_feat = x.shape[1] - src.shape[1]
+        
+        # "fractional coordinates" for structural features are constant (ones or scaled constant)
+        # should I divide by the number of structural features? Probably best to have some type of normalization to avoid nans
+        # normalization possibly should be the # of True's in each compound?
+        # actually, normalization doesn't matter because it's a mask
+        
+        # first half of features are prevalence encoded (i.e. 512//2==256)
+        pe[:, :, : self.d_model // 2] = self.pe(frac) * pe_scaler
+        # second half of features are prevalence log encoded
+        ple[:, :, self.d_model // 2 :] = self.ple(frac) * ple_scaler
+        
+        self.pe = FractionalEncoder(self.d_model, resolution=5000, log10=False)
+        self.ple = FractionalEncoder(self.d_model, resolution=5000, log10=True)
         """
 
 
