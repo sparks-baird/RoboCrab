@@ -40,6 +40,7 @@ class Model:
         self.train_loader = None
         self.classification = False
         self.n_elements = n_elements
+        # self.n_features_tot = n_elements + 75  # nrobo_feat
         self.compute_device = model.compute_device
         self.fudge = 0.02  # expected fractional tolerance (std. dev) ~= 2%
         self.verbose = verbose
