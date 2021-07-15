@@ -1,3 +1,9 @@
+"""
+Train on robocrystallographer and CrabNet features to predict material properties.
+
+It can also get feature-wise contributions to the target property across a
+dataset and determine feature-feature interactions.
+"""
 import os
 import numpy as np
 import pandas as pd
@@ -9,7 +15,8 @@ from crabnet.kingcrab import CrabNet
 from crabnet.model import Model
 from utils.get_compute_device import get_compute_device
 
-compute_device = get_compute_device(prefer_last=True)
+compute_device = get_compute_device(force_cpu=True)
+# compute_device = get_compute_device(prefer_last=True)
 RNG_SEED = 42
 torch.manual_seed(RNG_SEED)
 np.random.seed(RNG_SEED)
