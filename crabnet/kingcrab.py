@@ -229,17 +229,36 @@ class Encoder(nn.Module):
         # mask has 1 if n-th element is present, 0 if not. E.g. single element compound has mostly mask of 0's
         # element
         emask = frac
+
+        # if I changed frac to 1's and then normalized, then I think I get element-only (not compositional)
+        # emask[emask != 0] = 1.0
+        # emask = nn.functional.normalize(emask, p=1, dim=1)
+
+        # or change frac to 0's which eliminates elemental contribution
+        emask[emask != 0] = 0
+
         # category
-        cmask = torch.ones(d1, device=self.compute_device, dtype=src.dtype)
+        cmask = torch.ones(d1, device=self.compute_device, dtype=torch.float)
         # boolean
         bmask = bool_src
         bmask[bmask != 0] = 1
-        # bmask = torch.ones(d2, device=self.compute_device, dtype=src.dtype)
+        bmask = bmask.float()
+
+        # bmask = [bmask_sub//torch.count_nonzero(bmask_sub) for bmask_sub in bmask]
+        # bmask = torch.ones(d2, device=self.compute_device, dtype=torch.float)
+        # bmask = torch.zeros(d2, device=self.compute_device, dtype=torch.float)
         # float
-        fmask = torch.ones(d3, device=self.compute_device, dtype=src.dtype)
+        fmask = torch.ones(d3, device=self.compute_device, dtype=torch.float)
+
+        # L-1 normalize rows (sum to 1)
+        masks = [emask, cmask, bmask, fmask]
+        # masks = [nn.functional.normalize(mask, p=1, dim=1) for mask in masks]
 
         # concatenate masks
-        mask_2d = torch.cat([emask, bmask, cmask, fmask], dim=1)
+        mask_2d = torch.cat(masks, dim=1)
+
+        # make "rows" sum to 1
+        # mask_2d = nn.functional.normalize(mask_2d, p=1, dim=1)
 
         # unsqueeze
         mask = mask_2d.unsqueeze(dim=-1)
