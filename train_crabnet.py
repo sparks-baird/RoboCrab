@@ -5,6 +5,7 @@ It can also get feature-wise contributions to the target property across a
 dataset and determine feature-feature interactions.
 """
 import os
+from os.path import exists
 import numpy as np
 import pandas as pd
 import torch
@@ -76,6 +77,7 @@ def get_model(
 
     # Set the number of epochs, decide if you want a loss curve to be plotted
     model.fit(epochs=40, losscurve=True)
+    # model.fit(epochs=6, losscurve=True)
 
     # Save the network (saved as f"{model_name}.pth")
     model.save_network()
@@ -168,9 +170,10 @@ if __name__ == "__main__":
     model_val, mae_valn = save_results(
         data_dir, mat_prop, classification, "val.csv", verbose=False
     )
-    print("-----------------------------------------------------")
-    print("calculating test mae")
-    model_test, mae_test = save_results(
-        data_dir, mat_prop, classification, "test.csv", verbose=False
-    )
-    print("=====================================================")
+    if exists(data_dir + "/test.csv"):
+        print("-----------------------------------------------------")
+        print("calculating test mae")
+        model_test, mae_test = save_results(
+            data_dir, mat_prop, classification, "test.csv", verbose=False
+        )
+        print("=====================================================")
