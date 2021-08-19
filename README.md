@@ -2,7 +2,7 @@
 
 # Robocrystallographer + CrabNet = RoboCrab
 
-This software package builds on the Compositionally-Restricted Attention-Based Network (`CrabNet`) that takes only composition information to predict material properties by adding structural features from [robocrystallographer](https://github.com/hackingmaterials/robocrystallographer).
+This software package builds on the Compositionally-Restricted Attention-Based Network ([CrabNet](https://github.com/anthony-wang/CrabNet/tree/master/data)) that takes only composition information to predict material properties by adding structural features from [robocrystallographer](https://github.com/hackingmaterials/robocrystallographer).
 
 
 
