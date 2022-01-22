@@ -1,8 +1,8 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-> :warning: This repository is no longer being developed due to worsening performance when including robocrystallographer features :warning:
-
 # Robocrystallographer + CrabNet = RoboCrab
+
+> :warning: This repository is no longer being developed due to worsening performance when including robocrystallographer features :warning:
 
 This software package builds on the Compositionally-Restricted Attention-Based Network ([CrabNet](https://github.com/anthony-wang/CrabNet/tree/master/data)) that takes only composition information to predict material properties by adding structural features from [robocrystallographer](https://github.com/hackingmaterials/robocrystallographer).
 
